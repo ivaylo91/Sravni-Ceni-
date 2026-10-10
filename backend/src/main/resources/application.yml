@@ -1,0 +1,64 @@
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: always
+
+spring:
+  application:
+    name: sravni-ceni
+  config:
+    # Локални настройки (не се качват в git) – вижте .env.example
+    import: optional:file:.env[.properties]
+  datasource:
+    # Supabase → Project Settings → Database → Connection string → "Session pooler" (порт 5432).
+    # reWriteBatchedInserts ускорява импорта многократно.
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:54322/postgres?reWriteBatchedInserts=true}
+    username: ${DATABASE_USERNAME:postgres}
+    password: ${DATABASE_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:5}
+  jpa:
+    open-in-view: false
+    hibernate:
+      # Схемата се управлява от supabase/migrations – Hibernate само проверява.
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 100
+  jackson:
+    default-property-inclusion: non_null
+  threads:
+    virtual:
+      enabled: true
+
+app:
+  supabase:
+    # https://<project-ref>.supabase.co – за проверка на JWT токените от Supabase Auth
+    url: ${SUPABASE_URL:http://127.0.0.1:54321}
+    # Само за проекти със стария HS256 "JWT secret". Оставете празно при асиметрични ключове (JWKS).
+    jwt-secret: ${SUPABASE_JWT_SECRET:}
+  # Имейли на администраторите (могат да пускат импорт ръчно). Алтернатива: app_metadata.role = "admin".
+  admin-emails: ${ADMIN_EMAILS:}
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  import:
+    base-url: ${KZP_BASE_URL:https://kolkostruva.bg/opendata_files}
+    enabled: ${IMPORT_ENABLED:true}
+    # Всеки ден в 06:30 българско време се импортират данните от предния ден.
+    cron: ${IMPORT_CRON:0 30 6 * * *}
+    zone: Europe/Sofia
+    # ЕИК на веригите, които се импортират. Празно = всички (~70 вериги, ~1.4 млн. реда на ден).
+    chains: ${IMPORT_CHAINS:131129282,131071587,130007884,206255903,831556063,131324923,121644736,204786976,202420609,200978413,128036665}
+    # Колко дни история да се пази (price_history).
+    history-days: ${IMPORT_HISTORY_DAYS:90}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    bg.sravniceni: INFO
