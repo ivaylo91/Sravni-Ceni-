@@ -25,7 +25,7 @@ public record AppProperties(
 
     /** Настройки на импорта от kolkostruva.bg. */
     public record Import(String baseUrl, boolean enabled, String cron, String zone,
-                         Set<String> chains, int historyDays) {
+                         Set<String> chains, int historyDays, boolean onStartup) {
 
         public Import {
             chains = chains == null ? Set.of() : chains;

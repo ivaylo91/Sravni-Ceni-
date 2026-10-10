@@ -52,6 +52,8 @@ app:
     chains: ${IMPORT_CHAINS:131129282,131071587,130007884,206255903,831556063,131324923,121644736,204786976,202420609,200978413,128036665}
     # Колко дни история да се пази (price_history).
     history-days: ${IMPORT_HISTORY_DAYS:90}
+    # При празна база – импорт на вчерашните цени веднага след стартиране.
+    on-startup: ${IMPORT_ON_STARTUP:true}
 
 management:
   endpoints:

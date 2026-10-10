@@ -5,7 +5,9 @@
 --  (https://kolkostruva.bg/opendata). Всеки ден има ZIP с по един CSV
 --  файл за всяка търговска верига.
 
-create extension if not exists pg_trgm;
+-- Разширенията са в схема extensions (препоръка на Supabase)
+create schema if not exists extensions;
+create extension if not exists pg_trgm with schema extensions;
 
 -- Търговски вериги (Kaufland, Lidl, Billa, ...)
 create table chain (
@@ -59,7 +61,7 @@ create table product (
     constraint uq_product unique (chain_id, code)
 );
 create index idx_product_category on product (category_id);
-create index idx_product_name_trgm on product using gin (name gin_trgm_ops);
+create index idx_product_name_trgm on product using gin (name extensions.gin_trgm_ops);
 
 -- Последна известна цена на продукт в магазин
 create table price (

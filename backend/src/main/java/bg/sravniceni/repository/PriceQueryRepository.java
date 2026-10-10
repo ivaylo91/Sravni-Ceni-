@@ -160,7 +160,7 @@ public class PriceQueryRepository {
                     join price pr on pr.product_id = p.id
                     join store s on s.id = pr.store_id %2$s
                     group by p.id, c.id, src.name
-                    order by c.id, similarity(p.name, src.name) desc, min(%1$s)
+                    order by c.id, extensions.similarity(p.name, src.name) desc, min(%1$s)
                 ) best
                 order by price
                 limit :limit
