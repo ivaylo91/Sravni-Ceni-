@@ -35,13 +35,14 @@ public class ImportScheduler {
     @Async
     @EventListener(ApplicationReadyEvent.class)
     public void importIfEmpty() {
-        if (!config.enabled() || !config.onStartup()
+        boolean runOnceMode = config.runOnce() != null && !config.runOnce().isBlank();
+        if (!config.enabled() || !config.onStartup() || runOnceMode
                 || Boolean.TRUE.equals(jdbc.queryForObject("select exists (select 1 from price)", Boolean.class))) {
             return;
         }
         LocalDate yesterday = LocalDate.now(ZoneId.of(config.zone())).minusDays(1);
         log.info("Базата е празна – импорт на цените за {}", yesterday);
-        if (importService.importDate(yesterday).getStatus() != ImportRun.Status.SUCCESS) {
+        if (importService.importDateWithRetry(yesterday).getStatus() != ImportRun.Status.SUCCESS) {
             importService.importDate(yesterday.minusDays(1)); // файлът за вчера може още да не е публикуван
         }
     }
@@ -53,7 +54,7 @@ public class ImportScheduler {
         }
         LocalDate yesterday = LocalDate.now(ZoneId.of(config.zone())).minusDays(1);
         log.info("Планиран импорт на цените за {}", yesterday);
-        importService.importDate(yesterday);
+        importService.importDateWithRetry(yesterday);
     }
 
     /** Ръчно пускане от администратор – изпълнява се във фонов режим. */

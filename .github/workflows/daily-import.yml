@@ -1,0 +1,50 @@
+name: Daily price import
+
+# Импорт на цените от КЗП в Supabase всеки ден, независимо дали уеб сървърът работи.
+# Нужни secrets (Settings → Secrets and variables → Actions):
+#   DATABASE_URL, DATABASE_USERNAME, DATABASE_PASSWORD, SUPABASE_URL,
+#   SUPABASE_SERVICE_ROLE_KEY (по избор – за архив на ZIP файловете в Supabase Storage)
+on:
+  schedule:
+    - cron: '30 4 * * *' # 07:30 / 06:30 българско време (лятно / зимно)
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: 'yesterday, ГГГГ-ММ-ДД или ГГГГ-ММ-ДД..ГГГГ-ММ-ДД'
+        default: 'yesterday'
+        required: true
+
+concurrency:
+  group: price-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Build
+        run: ./mvnw -B -q -DskipTests package
+      - name: Import
+        env:
+          DATES: ${{ inputs.dates || 'yesterday' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_USERNAME: ${{ secrets.DATABASE_USERNAME }}
+          DATABASE_PASSWORD: ${{ secrets.DATABASE_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          IMPORT_ON_STARTUP: 'false'
+          KZP_LOCAL_ARCHIVE: ''
+        run: |
+          java -jar target/sravni-ceni-backend-*.jar \
+            --spring.main.web-application-type=none \
+            --app.import.run-once="$DATES"

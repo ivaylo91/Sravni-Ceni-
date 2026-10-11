@@ -37,10 +37,16 @@ public final class PostgresTestSupport {
         registry.add("spring.datasource.password", () -> "postgres");
     }
 
+    /** RLS политиките и Storage bucket-ът изискват схемите auth/storage на Supabase. */
+    static boolean isPlainPostgres(Path migration) {
+        String name = migration.getFileName().toString();
+        return !name.contains("_rls") && !name.contains("_storage");
+    }
+
     private static void applyMigrations() throws IOException {
         Path dir = Path.of("..", "supabase", "migrations");
         try (Stream<Path> files = Files.list(dir); Connection c = postgres.getPostgresDatabase().getConnection()) {
-            for (Path file : files.sorted().filter(f -> !f.getFileName().toString().contains("_rls")).toList()) {
+            for (Path file : files.sorted().filter(PostgresTestSupport::isPlainPostgres).toList()) {
                 c.createStatement().execute(Files.readString(file));
             }
         } catch (SQLException e) {

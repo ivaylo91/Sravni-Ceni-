@@ -11,10 +11,15 @@ import java.util.regex.Pattern;
  * Разпознава разфасовката от името на продукта, напр. „Прясно мляко 3% 1 Л.“,
  * „Кайма ок.750г“, „Сирене 2Х5КГ“, „Банани на кг“, за да изчисли цена за кг/л.
  *
- * @param quantity количество в базова мярка (кг, л или брой)
+ * @param quantity количество в базова мярка (кг, л или брой); null при стока на тегло
  * @param unit     "kg", "l" или "pcs"
  */
 public record PackageSize(BigDecimal quantity, String unit) {
+
+    /** Стока на тегло („Банани на кг“) – цената е за 1 кг и се купува произволно количество. */
+    public boolean byWeight() {
+        return quantity == null;
+    }
 
     private static final String NUMBER = "(\\d+(?:[.,]\\s?\\d+)?)";
     private static final String UNIT = "(кг|kg|гр|gr|г|g|мл|ml|л|l|бр)";
@@ -26,7 +31,7 @@ public record PackageSize(BigDecimal quantity, String unit) {
     private static final Pattern SINGLE = Pattern.compile(
             NUMBER + "\\s*" + UNIT + "\\.?" + END,
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
-    /** „на кг“, „кг.“ без число – цената е за 1 кг. */
+    /** „на кг“, „кг.“ без число – стока на тегло, цената е за 1 кг. */
     private static final Pattern PER_KG = Pattern.compile(
             "(?<![\\p{L}\\d])(?:кг|kg)\\.?" + END, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
@@ -54,7 +59,7 @@ public record PackageSize(BigDecimal quantity, String unit) {
             }
         }
         if (found == null && PER_KG.matcher(name).find()) {
-            found = new PackageSize(BigDecimal.ONE, "kg");
+            found = new PackageSize(null, "kg");
         }
         return Optional.ofNullable(found);
     }

@@ -6,14 +6,20 @@ import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import bg.sravniceni.dto.CatalogDtos.ChainDto;
 import bg.sravniceni.dto.CatalogDtos.HistoryPoint;
@@ -36,9 +42,11 @@ public class PriceQueryRepository {
     private static final int MAX_SEARCH_WORDS = 6;
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final ObjectMapper json;
 
-    public PriceQueryRepository(NamedParameterJdbcTemplate jdbc) {
+    public PriceQueryRepository(NamedParameterJdbcTemplate jdbc, ObjectMapper json) {
         this.jdbc = jdbc;
+        this.json = json;
     }
 
     // ------------------------------------------------------------------ справочници
@@ -122,7 +130,7 @@ public class PriceQueryRepository {
                        bool_or(pr.promo_price is not null) as promo,
                        count(*) as store_count,
                        max(pr.price_date) as price_date,
-                       min(%1$s) / nullif(p.package_qty, 0) as unit_price
+                       min(%1$s) / nullif(coalesce(p.package_qty, 1), 0) as unit_price
                 from product p
                 join chain c on c.id = p.chain_id
                 join price pr on pr.product_id = p.id
@@ -153,7 +161,7 @@ public class PriceQueryRepository {
                            bool_or(pr.promo_price is not null) as promo,
                            count(*) as store_count,
                            max(pr.price_date) as price_date,
-                           min(%1$s) / nullif(p.package_qty, 0) as unit_price
+                           min(%1$s) / nullif(coalesce(p.package_qty, 1), 0) as unit_price
                     from src
                     join product p on p.category_id = src.category_id and p.chain_id <> src.chain_id
                     join chain c on c.id = p.chain_id
@@ -211,8 +219,14 @@ public class PriceQueryRepository {
     public record StoreInfo(Long storeId, Long chainId, String chainName, String chainColor, String address) {
     }
 
-    /** Най-евтиният продукт, отговарящ на ред от списъка, в даден магазин. */
-    public record StoreMatch(Long storeId, Long productId, String productName, BigDecimal price, boolean promo) {
+    /** Ред от кошницата за заявката. amount/unit са по избор (кг или л). */
+    public record BasketQueryItem(int index, Short categoryId, String keyword, int quantity,
+                                  BigDecimal amount, String unit) {
+    }
+
+    /** Най-евтиният вариант за ред от кошницата в даден магазин. packs е броят опаковки. */
+    public record StoreMatch(int itemIndex, Long storeId, Long productId, String productName, BigDecimal price,
+                             boolean promo, int packs, BigDecimal lineTotal, BigDecimal packageQty, String packageUnit) {
     }
 
     public List<StoreInfo> stores(String settlementCode, Collection<Long> chainIds) {
@@ -231,31 +245,78 @@ public class PriceQueryRepository {
                         rs.getString("color"), rs.getString("address")));
     }
 
-    /** За всеки магазин в населеното място – най-евтиният съвпадащ продукт. */
-    public List<StoreMatch> cheapestMatchPerStore(String settlementCode, Short categoryId, String keyword,
-                                                  Collection<Long> chainIds) {
-        var params = new MapSqlParameterSource("settlement", settlementCode);
-        var where = new StringBuilder("where s.settlement_code = :settlement");
-        if (categoryId != null) {
-            where.append(" and p.category_id = :category");
-            params.addValue("category", categoryId);
-        }
+    /**
+     * За всеки ред от кошницата и всеки магазин в населеното място – най-евтиният
+     * съвпадащ продукт. Всички редове се изчисляват с една заявка (LATERAL), за да
+     * има само едно отиване до базата.
+     * <p>
+     * Без amount: сума = брой × цена на опаковка. С amount (кг/л): само продукти
+     * с разпозната разфасовка в същата мярка; купуват се ceil(amount / разфасовка)
+     * опаковки и се избира най-ниската обща сума. Стоката на тегло се плаща точно
+     * (amount × цена за кг).
+     */
+    public List<StoreMatch> cheapestMatches(String settlementCode, List<BasketQueryItem> items, Collection<Long> chainIds) {
+        var params = new MapSqlParameterSource("settlement", settlementCode).addValue("items", toJson(items));
+        String chainFilter = "";
         if (chainIds != null && !chainIds.isEmpty()) {
-            where.append(" and s.chain_id in (:chains)");
+            chainFilter = "and s.chain_id in (:chains)";
             params.addValue("chains", chainIds);
         }
-        appendTextFilter(where, params, keyword);
         return jdbc.query("""
-                select distinct on (pr.store_id)
-                       pr.store_id, p.id as product_id, p.name, %1$s as price, pr.promo_price is not null as promo
-                from price pr
-                join product p on p.id = pr.product_id
-                join store s on s.id = pr.store_id
-                %2$s
-                order by pr.store_id, %1$s, p.id
-                """.formatted(EFFECTIVE_PRICE, where), params,
-                (rs, i) -> new StoreMatch(rs.getLong("store_id"), rs.getLong("product_id"), rs.getString("name"),
-                        rs.getBigDecimal("price"), rs.getBoolean("promo")));
+                with items as (
+                    select * from jsonb_to_recordset(cast(:items as jsonb))
+                        as i(idx int, category smallint, words text[], quantity int, amount numeric, unit text)
+                )
+                select i.idx, m.*
+                from items i
+                cross join lateral (
+                    select distinct on (pr.store_id)
+                           pr.store_id, p.id as product_id, p.name, p.package_qty, p.package_unit,
+                           c.eff as price, pr.promo_price is not null as promo, c.packs, t.line_total
+                    from price pr
+                    join product p on p.id = pr.product_id
+                    join store s on s.id = pr.store_id
+                    cross join lateral (
+                        select coalesce(pr.promo_price, pr.price) as eff,
+                               case when i.amount is null or p.package_qty is null then i.quantity
+                                    else ceil(i.amount / nullif(p.package_qty, 0))::int end as packs
+                    ) c
+                    cross join lateral (
+                        -- стока на тегло (package_qty е null): плаща се точното количество × цена за кг
+                        select case when i.amount is not null and p.package_qty is null
+                                    then round(i.amount * c.eff, 2)
+                                    else c.packs * c.eff end as line_total
+                    ) t
+                    where s.settlement_code = :settlement %s
+                      and (i.category is null or p.category_id = i.category)
+                      and p.name ilike all (i.words)
+                      and (i.amount is null or (p.package_unit = i.unit and (p.package_qty is null or p.package_qty > 0)))
+                    order by pr.store_id, t.line_total, c.eff, p.id
+                ) m
+                """.formatted(chainFilter), params,
+                (rs, i) -> new StoreMatch(rs.getInt("idx"), rs.getLong("store_id"), rs.getLong("product_id"),
+                        rs.getString("name"), rs.getBigDecimal("price"), rs.getBoolean("promo"), rs.getInt("packs"),
+                        rs.getBigDecimal("line_total"), rs.getBigDecimal("package_qty"), rs.getString("package_unit")));
+    }
+
+    /** Редовете като JSON за jsonb_to_recordset; думите са готови ILIKE шаблони (escape символът по подразбиране е обратна наклонена черта). */
+    private String toJson(List<BasketQueryItem> items) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (BasketQueryItem item : items) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("idx", item.index());
+            row.put("category", item.categoryId());
+            row.put("quantity", item.quantity());
+            row.put("amount", item.amount());
+            row.put("unit", item.unit());
+            row.put("words", words(item.keyword()).stream().map(w -> "%" + escapeLike(w) + "%").toList());
+            rows.add(row);
+        }
+        try {
+            return json.writeValueAsString(rows);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     // ------------------------------------------------------------------ помощни
@@ -265,14 +326,21 @@ public class PriceQueryRepository {
         if (text == null || text.isBlank()) {
             return;
         }
-        List<String> words = Arrays.stream(text.trim().split("\\s+"))
-                .filter(w -> !w.isBlank())
-                .limit(MAX_SEARCH_WORDS)
-                .toList();
+        List<String> words = words(text);
         for (int i = 0; i < words.size(); i++) {
             where.append(" and p.name ilike :w").append(i).append(" escape '\\'");
             params.addValue("w" + i, "%" + escapeLike(words.get(i)) + "%");
         }
+    }
+
+    private static List<String> words(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(text.trim().split("\\s+"))
+                .filter(w -> !w.isBlank())
+                .limit(MAX_SEARCH_WORDS)
+                .toList();
     }
 
     static String escapeLike(String s) {
@@ -286,8 +354,8 @@ public class PriceQueryRepository {
     private static final RowMapper<ProductOffer> OFFER_MAPPER = PriceQueryRepository::mapOffer;
 
     private static ProductOffer mapOffer(ResultSet rs, int rowNum) throws SQLException {
-        BigDecimal unitPrice = rs.getBigDecimal("unit_price");
         String unit = rs.getString("package_unit");
+        BigDecimal unitPrice = unit == null ? null : rs.getBigDecimal("unit_price");
         return new ProductOffer(
                 rs.getLong("id"),
                 rs.getString("name"),

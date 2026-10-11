@@ -19,16 +19,35 @@ public final class BasketDtos {
     private BasketDtos() {
     }
 
-    /** Ред от списъка: категория и/или ключова дума, количество. */
+    /**
+     * Ред от списъка: категория и/или ключова дума и количество – брой опаковки
+     * или (ако е зададено amount) желано количество в кг/л. Тогава се сравнява
+     * цената на нужния брой опаковки, а не цената на една опаковка.
+     */
     public record BasketItemRequest(
             Short categoryId,
             @Size(max = 100, message = "Ключовата дума е твърде дълга") String keyword,
             @Min(value = 1, message = "Количеството трябва да е поне 1")
-            @Max(value = 99, message = "Количеството трябва да е най-много 99") int quantity) {
+            @Max(value = 99, message = "Количеството трябва да е най-много 99") int quantity,
+            BigDecimal amount,
+            String unit) {
+
+        public BasketItemRequest(Short categoryId, String keyword, int quantity) {
+            this(categoryId, keyword, quantity, null, null);
+        }
 
         @AssertTrue(message = "Изберете категория или въведете ключова дума")
         public boolean isCriteriaPresent() {
             return categoryId != null || (keyword != null && !keyword.isBlank());
+        }
+
+        @AssertTrue(message = "Количеството трябва да е между 0,01 и 100 кг или л")
+        public boolean isAmountValid() {
+            if (amount == null && unit == null) {
+                return true;
+            }
+            return amount != null && ("kg".equals(unit) || "l".equals(unit))
+                    && amount.compareTo(new BigDecimal("0.01")) >= 0 && amount.compareTo(BigDecimal.valueOf(100)) <= 0;
         }
     }
 
@@ -40,7 +59,7 @@ public final class BasketDtos {
             Set<Long> chainIds) {
     }
 
-    /** Избраният (най-евтин) продукт за даден ред от списъка. */
+    /** Избраният (най-евтин) продукт за даден ред от списъка. quantity е броят опаковки. */
     public record BasketLine(
             int itemIndex,
             Long productId,
@@ -49,6 +68,8 @@ public final class BasketDtos {
             boolean promo,
             int quantity,
             BigDecimal lineTotal,
+            BigDecimal packageQty,
+            String packageUnit,
             Long storeId,
             String chainName,
             String address) {

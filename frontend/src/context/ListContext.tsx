@@ -32,7 +32,9 @@ export function ListProvider({ children }: { children: ReactNode }) {
     const kw = keyword?.trim() || undefined
     setItems((prev) => {
       // Същият ред вече е в списъка → увеличаваме количеството
-      const existing = prev.find((i) => i.categoryId === categoryId && (i.keyword ?? '') === (kw ?? '').toLowerCase())
+      const existing = prev.find(
+        (i) => !i.unit && i.categoryId === categoryId && (i.keyword ?? '') === (kw ?? '').toLowerCase(),
+      )
       if (existing) {
         return prev.map((i) => (i === existing ? { ...i, quantity: Math.min(99, i.quantity + quantity) } : i))
       }

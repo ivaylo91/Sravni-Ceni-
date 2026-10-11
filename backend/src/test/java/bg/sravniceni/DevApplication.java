@@ -60,7 +60,7 @@ public class DevApplication {
     private static void applyMigrations(EmbeddedPostgres pg) throws IOException, SQLException {
         try (Stream<Path> files = Files.list(Path.of("..", "supabase", "migrations"));
              Connection c = pg.getPostgresDatabase().getConnection()) {
-            for (Path file : files.sorted().filter(f -> !f.getFileName().toString().contains("_rls")).toList()) {
+            for (Path file : files.sorted().filter(PostgresTestSupport::isPlainPostgres).toList()) {
                 c.createStatement().execute(Files.readString(file));
             }
         }

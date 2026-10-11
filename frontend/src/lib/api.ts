@@ -47,7 +47,13 @@ const qs = (params: Record<string, string | number | undefined | null>) => {
 }
 
 const toItems = (items: ListItem[]) =>
-  items.map(({ categoryId, keyword, quantity }) => ({ categoryId, keyword: keyword || undefined, quantity }))
+  items.map(({ categoryId, keyword, quantity, amount, unit }) => ({
+    categoryId,
+    keyword: keyword || undefined,
+    quantity,
+    amount: unit ? amount : undefined,
+    unit,
+  }))
 
 export type SortOrder = 'PRICE' | 'UNIT_PRICE' | 'NAME'
 

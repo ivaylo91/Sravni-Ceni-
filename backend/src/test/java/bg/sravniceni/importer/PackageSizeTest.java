@@ -19,13 +19,20 @@ class PackageSizeTest {
             "МАР КРАВЕ СИРЕНЕ ДАВИДОВО 2Х5КГ КОФА   | 10    | kg",
             "Минерална Вода Devin 1. 5 Л.           | 1.5   | l",
             "700МЛ ЯБЪЛКОВ ОЦЕТ VEDA                | 0.7   | l",
-            "Лимони на кг                           | 1     | kg",
             "Яйца Медковец М 6Бр. Кутия             | 6     | pcs",
     })
     void parsesPackageSize(String name, BigDecimal qty, String unit) {
         var size = PackageSize.parse(name).orElseThrow();
         assertThat(size.quantity()).isEqualByComparingTo(qty);
         assertThat(size.unit()).isEqualTo(unit);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"Лимони на кг", "КАРТОФИ КГ", "Кромид лук, България, кг.ОПС"})
+    void recognisesGoodsSoldByWeight(String name) {
+        var size = PackageSize.parse(name).orElseThrow();
+        assertThat(size.byWeight()).isTrue();
+        assertThat(size.unit()).isEqualTo("kg");
     }
 
     @ParameterizedTest

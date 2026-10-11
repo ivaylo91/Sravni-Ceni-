@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,14 +42,17 @@ public class CatalogService {
         this.products = products;
     }
 
+    @Cacheable("settlements")
     public List<SettlementDto> settlements() {
         return prices.settlementsWithStores();
     }
 
+    @Cacheable("chains")
     public List<ChainDto> chains(String settlementCode) {
         return prices.chains(settlementCode);
     }
 
+    @Cacheable("categories")
     public List<CategoryGroupDto> categoryGroups() {
         Map<CategoryGroup, List<CategoryDto>> grouped = new LinkedHashMap<>();
         for (Category c : categories.findAllWithGroup()) {
@@ -85,6 +89,7 @@ public class CatalogService {
                 prices.alternatives(id, settlementCode, 12));
     }
 
+    @Cacheable("stats")
     public StatsDto stats() {
         return prices.stats();
     }

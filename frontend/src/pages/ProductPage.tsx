@@ -51,9 +51,11 @@ export function ProductPage() {
               </Link>
             </div>
             <h1 className="text-2xl font-extrabold break-words text-slate-900">{product.name}</h1>
-            {product.packageQty && product.packageUnit && product.packageUnit !== 'pcs' && (
+            {product.packageUnit && product.packageUnit !== 'pcs' && (
               <p className="mt-1 text-sm text-slate-500">
-                Разфасовка: {product.packageQty} {unitLabel(product.packageUnit)}
+                {product.packageQty
+                  ? `Разфасовка: ${String(product.packageQty).replace('.', ',')} ${unitLabel(product.packageUnit)}`
+                  : `Продава се на ${unitLabel(product.packageUnit)}`}
               </p>
             )}
           </div>
@@ -156,22 +158,46 @@ function PriceChart({ points }: { points: HistoryPoint[] }) {
   const values = points.map((p) => p.minPrice)
   const min = Math.min(...values)
   const max = Math.max(...values)
-  const range = max - min || 1
+  const range = max - min
   const x = (i: number) => pad + (i / (points.length - 1)) * (w - pad * 2)
-  const y = (v: number) => h - pad - ((v - min) / range) * (h - pad * 2)
+  // при непроменена цена линията е по средата
+  const y = (v: number) => (range === 0 ? h / 2 : h - pad - ((v - min) / range) * (h - pad * 2))
   const path = points.map((p, i) => `${i ? 'L' : 'M'}${x(i)},${y(p.minPrice)}`).join(' ')
 
   return (
     <figure>
-      <svg viewBox={`0 0 ${w} ${h}`} className="h-40 w-full" role="img" aria-label="Графика на цената във времето">
+      {/* preserveAspectRatio="none" – графиката запълва цялата ширина; линията остава с еднаква дебелина */}
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        className="h-40 w-full"
+        role="img"
+        aria-label={`Графика на цената: от ${formatPrice(points[0].minPrice)} до ${formatPrice(points[points.length - 1].minPrice)}`}
+      >
         <path d={`${path} L${x(points.length - 1)},${h - pad} L${x(0)},${h - pad} Z`} className="fill-brand-100" />
-        <path d={path} className="fill-none stroke-brand-600" strokeWidth={2.5} strokeLinejoin="round" />
+        <path
+          d={path}
+          className="fill-none stroke-brand-600"
+          strokeWidth={2.5}
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
         {points.map((p, i) => (
-          <circle key={p.date} cx={x(i)} cy={y(p.minPrice)} r={3} className="fill-brand-700">
+          <line
+            key={p.date}
+            x1={x(i)}
+            x2={x(i)}
+            y1={y(p.minPrice)}
+            y2={y(p.minPrice)}
+            className="stroke-brand-700"
+            strokeWidth={7}
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          >
             <title>
               {formatDate(p.date)}: {formatPrice(p.minPrice)}
             </title>
-          </circle>
+          </line>
         ))}
       </svg>
       <figcaption className="mt-2 flex justify-between text-xs text-slate-500">

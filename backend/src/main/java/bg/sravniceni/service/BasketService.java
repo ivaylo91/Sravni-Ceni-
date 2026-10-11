@@ -20,6 +20,7 @@ import bg.sravniceni.dto.BasketDtos.BasketResult;
 import bg.sravniceni.dto.BasketDtos.SplitBasket;
 import bg.sravniceni.dto.BasketDtos.StoreBasket;
 import bg.sravniceni.repository.PriceQueryRepository;
+import bg.sravniceni.repository.PriceQueryRepository.BasketQueryItem;
 import bg.sravniceni.repository.PriceQueryRepository.StoreInfo;
 import bg.sravniceni.repository.PriceQueryRepository.StoreMatch;
 
@@ -27,7 +28,8 @@ import bg.sravniceni.repository.PriceQueryRepository.StoreMatch;
  * Намира най-евтината кошница за списък за пазаруване.
  * <ol>
  *   <li>За всеки ред от списъка и всеки магазин в населеното място се избира
- *       най-евтиният съвпадащ продукт (категория + ключови думи).</li>
+ *       най-евтиният съвпадащ продукт (категория + ключови думи). Ако редът е
+ *       в кг/л, се сравнява сумата за нужния брой опаковки.</li>
  *   <li>Магазините се подреждат по брой намерени продукти, после по обща сума.</li>
  *   <li>Изчислява се и „разделено“ пазаруване – всеки продукт от магазина,
  *       където е най-евтин.</li>
@@ -53,21 +55,24 @@ public class BasketService {
             stores.put(s.storeId(), s);
         }
 
-        // matches[storeId][itemIndex] = най-евтиният съвпадащ продукт
-        Map<Long, StoreMatch[]> matches = new HashMap<>();
+        List<BasketQueryItem> queryItems = new ArrayList<>();
         for (int i = 0; i < items.size(); i++) {
             BasketItemRequest item = items.get(i);
             String keyword = item.keyword() == null || item.keyword().isBlank() ? null : item.keyword();
-            for (StoreMatch m : prices.cheapestMatchPerStore(request.settlementCode(), item.categoryId(), keyword, chainIds)) {
-                matches.computeIfAbsent(m.storeId(), k -> new StoreMatch[items.size()])[i] = m;
-            }
+            queryItems.add(new BasketQueryItem(i, item.categoryId(), keyword, item.quantity(), item.amount(), item.unit()));
+        }
+
+        // matches[storeId][itemIndex] = най-евтиният вариант за реда в магазина
+        Map<Long, StoreMatch[]> matches = new HashMap<>();
+        for (StoreMatch m : prices.cheapestMatches(request.settlementCode(), queryItems, chainIds)) {
+            matches.computeIfAbsent(m.storeId(), k -> new StoreMatch[items.size()])[m.itemIndex()] = m;
         }
 
         List<StoreBasket> baskets = new ArrayList<>();
         matches.forEach((storeId, found) -> {
             StoreInfo store = stores.get(storeId);
             if (store != null) {
-                baskets.add(storeBasket(store, found, items));
+                baskets.add(storeBasket(store, found));
             }
         });
         baskets.sort(Comparator.comparingInt(StoreBasket::foundCount).reversed()
@@ -87,11 +92,11 @@ public class BasketService {
                 items.size(),
                 baskets.subList(0, Math.min(TOP_STORES, baskets.size())),
                 bestPerChain,
-                split(matches, stores, items),
+                split(matches, stores, items.size()),
                 savings(bestPerChain));
     }
 
-    private static StoreBasket storeBasket(StoreInfo store, StoreMatch[] found, List<BasketItemRequest> items) {
+    private static StoreBasket storeBasket(StoreInfo store, StoreMatch[] found) {
         List<BasketLine> lines = new ArrayList<>();
         List<Integer> missing = new ArrayList<>();
         BigDecimal total = BigDecimal.ZERO;
@@ -101,26 +106,24 @@ public class BasketService {
                 missing.add(i);
                 continue;
             }
-            BasketLine line = line(i, m, items.get(i).quantity(), store);
-            lines.add(line);
-            total = total.add(line.lineTotal());
+            lines.add(line(m, store));
+            total = total.add(m.lineTotal());
         }
         return new StoreBasket(store.storeId(), store.chainId(), store.chainName(), store.chainColor(), store.address(),
                 total, lines.size(), missing, lines);
     }
 
-    private static SplitBasket split(Map<Long, StoreMatch[]> matches, Map<Long, StoreInfo> stores,
-                                     List<BasketItemRequest> items) {
+    private static SplitBasket split(Map<Long, StoreMatch[]> matches, Map<Long, StoreInfo> stores, int itemCount) {
         List<BasketLine> lines = new ArrayList<>();
         List<Integer> missing = new ArrayList<>();
         Set<Long> usedStores = new HashSet<>();
         BigDecimal total = BigDecimal.ZERO;
-        for (int i = 0; i < items.size(); i++) {
+        for (int i = 0; i < itemCount; i++) {
             StoreMatch best = null;
             for (StoreMatch[] perStore : matches.values()) {
                 StoreMatch m = perStore[i];
                 if (m != null && stores.containsKey(m.storeId())
-                        && (best == null || m.price().compareTo(best.price()) < 0)) {
+                        && (best == null || m.lineTotal().compareTo(best.lineTotal()) < 0)) {
                     best = m;
                 }
             }
@@ -128,10 +131,9 @@ public class BasketService {
                 missing.add(i);
                 continue;
             }
-            BasketLine line = line(i, best, items.get(i).quantity(), stores.get(best.storeId()));
-            lines.add(line);
+            lines.add(line(best, stores.get(best.storeId())));
             usedStores.add(best.storeId());
-            total = total.add(line.lineTotal());
+            total = total.add(best.lineTotal());
         }
         return new SplitBasket(total, usedStores.size(), missing, lines);
     }
@@ -149,8 +151,8 @@ public class BasketService {
         return comparable.get(comparable.size() - 1).total().subtract(comparable.get(0).total());
     }
 
-    private static BasketLine line(int index, StoreMatch m, int quantity, StoreInfo store) {
-        return new BasketLine(index, m.productId(), m.productName(), m.price(), m.promo(), quantity,
-                m.price().multiply(BigDecimal.valueOf(quantity)), store.storeId(), store.chainName(), store.address());
+    private static BasketLine line(StoreMatch m, StoreInfo store) {
+        return new BasketLine(m.itemIndex(), m.productId(), m.productName(), m.price(), m.promo(), m.packs(),
+                m.lineTotal(), m.packageQty(), m.packageUnit(), store.storeId(), store.chainName(), store.address());
     }
 }

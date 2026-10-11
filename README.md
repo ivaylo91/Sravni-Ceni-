@@ -15,6 +15,7 @@ See [docs/RESEARCH.md](docs/RESEARCH.md) for the market and data research behind
 - **Browse the 101 KZP basket categories**, grouped into 16 sections.
 - **Product page** with prices in every store, 60‑day price history, and similar products in other chains.
 - **Shopping list** (category + optional keyword + quantity). It works without an account, stored in the browser.
+  Each item's quantity is either a number of packs (бр.) or an amount in **kg or litres**. With an amount, the basket compares what it costs to reach that amount, e.g. 5 l of oil as 1 × 5 l or 5 × 1 l, instead of comparing single-pack prices.
 - **Cheapest basket**, recalculated as you edit the list:
   - the best single store;
   - the best store per chain;
@@ -23,7 +24,9 @@ See [docs/RESEARCH.md](docs/RESEARCH.md) for the market and data research behind
 
   You can exclude chains.
 - **Accounts** (Supabase Auth): save lists to the cloud and open them on any device.
-- **Admin page**: import history and manual import for a chosen date. A daily automatic import runs at 06:30 Sofia time.
+- **Admin page**: import history and manual import for a chosen date.
+- **Daily import** from GitHub Actions, so it works even when the web server is asleep or off.
+- **Daily ZIP archive** in Supabase Storage. KZP keeps only about 14 days online.
 
 ## Project structure
 
@@ -83,6 +86,43 @@ Supabase exposes all tables over its REST API, so **RLS is enabled everywhere**:
 - the catalog is read-only;
 - shopping lists are owner-only.
 
+## Deployment
+
+| Part | Where | Config |
+|---|---|---|
+| Database + Auth + Storage | Supabase | `supabase/migrations/*` |
+| Backend (Docker) | Render, or any Docker host | [`render.yaml`](render.yaml), [`backend/Dockerfile`](backend/Dockerfile) |
+| Frontend | Vercel | [`frontend/vercel.json`](frontend/vercel.json). It proxies `/api/*` to the backend, so no CORS setup is needed |
+| Daily import + archive | GitHub Actions | [`.github/workflows/daily-import.yml`](.github/workflows/daily-import.yml) |
+| Tests on every push | GitHub Actions | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) |
+
+1. **Backend on Render.** Go to New → Blueprint, pick this repository, and fill in the `sync: false` variables (the same values as `backend/.env`).
+2. **Frontend on Vercel.**
+   - Import the repository with **Root Directory** `frontend`.
+   - Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+   - If your Render URL is not `sravni-ceni-api.onrender.com`, update it in `frontend/vercel.json`.
+3. **Supabase Auth.** Set the Site URL and redirect URLs to the Vercel domain.
+4. **GitHub.** Go to Settings → Secrets and variables → Actions and add these secrets:
+   - `DATABASE_URL`, `DATABASE_USERNAME`, `DATABASE_PASSWORD`;
+   - `SUPABASE_URL`;
+   - `SUPABASE_SERVICE_ROLE_KEY` (the secret key, needed for the ZIP archive).
+
+   The import runs every morning. You can also run it by hand (Actions → Daily price import → Run workflow), with `yesterday`, a single date, or a range like `2026-09-27..2026-10-09`.
+
+### One-off import from the command line
+
+```bash
+cd backend && ./mvnw -q -DskipTests package
+java -jar target/sravni-ceni-backend-*.jar --spring.main.web-application-type=none --app.import.run-once=yesterday
+```
+
+The importer looks for each date's ZIP in this order:
+1. `backend/.kzp-archive/<date>.zip`, if present;
+2. kolkostruva.bg (and then copies it to the Supabase Storage archive);
+3. the Supabase Storage archive.
+
+Importing an older date only adds price history; it never overwrites newer current prices.
+
 ## REST API
 
 | Method | Path | Auth | Description |
@@ -93,7 +133,7 @@ Supabase exposes all tables over its REST API, so **RLS is enabled everywhere**:
 | GET | `/api/public/chains?settlement=` | – | Chains in a town |
 | GET | `/api/public/products?q=&settlement=&category=&chain=&sort=PRICE\|UNIT_PRICE\|NAME&page=&size=` | – | Search; every word must match |
 | GET | `/api/public/products/{id}?settlement=` | – | Store prices, history, alternatives |
-| POST | `/api/public/basket` | – | `{settlementCode, items:[{categoryId?, keyword?, quantity}], chainIds?}` |
+| POST | `/api/public/basket` | – | `{settlementCode, items:[{categoryId?, keyword?, quantity, amount?, unit?: "kg"\|"l"}], chainIds?}` |
 | GET | `/api/me` | user | Current user and admin flag |
 | GET/POST | `/api/lists` | user | Saved lists |
 | GET/PUT/DELETE | `/api/lists/{id}` | user | One saved list (owner only, 404 otherwise) |
@@ -112,7 +152,11 @@ Errors come back as RFC 9457 Problem Details, with Bulgarian messages in `detail
 | `CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Frontend origin(s) |
 | `IMPORT_ENABLED` / `IMPORT_CRON` | `true` / `0 30 6 * * *` | Daily import |
 | `IMPORT_CHAINS` | 11 supermarket chains (EIKs) | Empty = all ~70 chains (~1.4M rows/day; too big for the Supabase free tier) |
-| `IMPORT_HISTORY_DAYS` | `90` | How many days of price history to keep |
+| `IMPORT_HISTORY_DAYS` | `60` | How many days of price history to keep |
+| `IMPORT_ON_STARTUP` | `true` | Import yesterday's prices on startup when the database is empty |
+| `IMPORT_RUN_ONCE` | – | `yesterday` / date / range: import, then exit |
+| `KZP_LOCAL_ARCHIVE` | `.kzp-archive` | Local folder with already-downloaded ZIPs |
+| `SUPABASE_SERVICE_ROLE_KEY` | – | Secret key used to archive ZIPs in Supabase Storage (`kzp-archive` bucket). Server only |
 
 ## Tests
 
@@ -120,10 +164,10 @@ Errors come back as RFC 9457 Problem Details, with Bulgarian messages in `detail
 cd backend && ./mvnw test
 ```
 
-There are 26 tests:
+There are 31 tests. CI runs them on every push:
 - the CSV parser, using quirks taken from the real KZP files;
 - package-size parsing;
-- a full integration test on a real embedded PostgreSQL: import → search → basket → saved lists with security → admin access.
+- a full integration test on a real embedded PostgreSQL: import → search → basket (including kg/l amounts) → history backfill → saved lists with security → admin access.
 
 ## Data caveats
 

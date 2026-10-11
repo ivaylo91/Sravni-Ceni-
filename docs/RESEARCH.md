@@ -29,7 +29,7 @@
 | "Promo price" of `0` or ≥ regular | Metro sends `0` | Treated as no promotion |
 | Prices with 4 decimals | `1.3800` | Rounded to 2 |
 | Category outside 1–101 | `150`, `1972047017` | Row skipped and counted |
-| **One chain's file is a copy of another's** | On **2026-10-08 and 2026-10-09** the Kaufland file was byte-identical to Lilly Drogerie's (drugstore prices under Kaufland's name). 2026-10-10 is correct. | Files with identical content in the same ZIP are skipped. The chain keeps its previous day's prices and a warning is recorded in `import_run.message` |
+| **One chain's file is a copy of another's** | This is common. Of the 14 days from 27 Sep to 10 Oct 2026, **Billa's file held the pharmacy Нове Фарм's prices on 8 days**, and **Kaufland's held another chain's prices on 4 days** (Жанет, Богат Беден, Lilly Drogerie). Without a check, Billa would show medicine prices on most days. | Files with identical content in the same ZIP are skipped. The chain keeps its previous day's prices and a warning is recorded in `import_run.message` |
 | No EAN/barcode | Each chain has its own product codes | Products are matched across chains by **KZP category + keywords** (see §4) |
 
 Other things worth knowing:

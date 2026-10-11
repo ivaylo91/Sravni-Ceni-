@@ -85,12 +85,16 @@ export interface Stats {
   lastUpdate?: string
 }
 
-/** Ред от списъка за пазаруване. */
+export type AmountUnit = 'kg' | 'l'
+
+/** Ред от списъка за пазаруване: брой опаковки или (ако има amount) количество в кг/л. */
 export interface ListItem {
   id: string
   categoryId?: number
   keyword?: string
   quantity: number
+  amount?: number
+  unit?: AmountUnit
 }
 
 export interface BasketLine {
@@ -101,6 +105,8 @@ export interface BasketLine {
   promo: boolean
   quantity: number
   lineTotal: number
+  packageQty?: number
+  packageUnit?: string
   storeId: number
   chainName: string
   address: string
@@ -132,7 +138,7 @@ export interface SavedList {
   name: string
   createdAt: string
   updatedAt: string
-  items: { categoryId?: number; keyword?: string; quantity: number }[]
+  items: { categoryId?: number; keyword?: string; quantity: number; amount?: number; unit?: AmountUnit }[]
 }
 
 export interface ImportRun {

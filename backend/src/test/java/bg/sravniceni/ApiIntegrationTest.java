@@ -1,6 +1,7 @@
 package bg.sravniceni;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -81,13 +82,16 @@ class ApiIntegrationTest {
                 + "\"68134\",\"Кауфланд София 1\",\"Хляб Добруджа 650г\",\"101\",\"2\",\"1.20\",\"\"\n"
                 + "\"68134\",\"Кауфланд София 2\",\"Хляб Добруджа 650г\",\"101\",\"2\",\"1.20\",\"\"\n"
                 + "\"68134\",\"Кауфланд София 1\",\"Банани на кг\",\"102\",\"52\",\"2.49\",\"\"\n"
-                + "\"56784\",\"Кауфланд Пловдив\",\"Банани на кг\",\"102\",\"52\",\"2.29\",\"\"\n");
+                + "\"56784\",\"Кауфланд Пловдив\",\"Банани на кг\",\"102\",\"52\",\"2.29\",\"\"\n"
+                + "\"68134\",\"Кауфланд София 1\",\"Олио Бисер 3 л\",\"103\",\"42\",\"6.30\",\"\"\n");
         files.put("Лидл България_131071587.csv", "Населено място;Търговски обект;Наименование на продукта;"
                 + "Код на продукта;Категория;Цена на дребно;Цена в промоция\n"
                 + "68134;Лидл София;Прясно мляко Верея 3% 1 Л.;5001;6;1,69;\n"
                 + "68134;Лидл София;Хляб Добруджа 500 г;5002;2;1,10;\n"
                 + "68134;Лидл София;Кашкавал \"Витоша 400г;5003;11;7,99;\n"
-                + "68134;Лидл София;Невалидна категория;5004;150;1,00;\n");
+                + "68134;Лидл София;Невалидна категория;5004;150;1,00;\n"
+                + "68134;Лидл София;Олио Бисер 1 л;5005;42;2,00;\n"
+                + "68134;Лидл София;Олио Бисер 5 л;5006;42;8,50;\n");
         files.put("Нова верига (Нова ЕООД)_123456789.csv", HEADER
                 + "\"12345\",\"Магазин Село\",\"Прясно мляко\",\"1\",\"6\",\"1.50\",\"\"\n");
         Path day2 = zip(dir.resolve("day2.zip"), files);
@@ -100,13 +104,15 @@ class ApiIntegrationTest {
     void importKeepsOnlyLatestPricesAndBuildsHistory() {
         assertThat(jdbc.queryForObject("select count(*) from price pr join product p on p.id = pr.product_id "
                 + "where p.code = '999'", Integer.class)).isZero();
-        assertThat(jdbc.queryForObject("select count(distinct price_date) from price_history", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForList("select distinct price_date from price_history", java.sql.Date.class))
+                .extracting(java.sql.Date::toLocalDate).contains(DAY_1, DAY_2);
         assertThat(jdbc.queryForObject("select name from settlement where code = '12345'", String.class))
                 .isEqualTo("Населено място 12345");
         assertThat(jdbc.queryForObject("select short_name from chain where eik = '123456789'", String.class))
                 .isEqualTo("Нова верига");
-        // Разфасовката е разпозната от името
+        // Разфасовката е разпозната от името; „Банани на кг“ е стока на тегло
         assertThat(jdbc.queryForObject("select package_unit from product where code = '102'", String.class)).isEqualTo("kg");
+        assertThat(jdbc.queryForObject("select package_qty from product where code = '102'", java.math.BigDecimal.class)).isNull();
     }
 
     @Test
@@ -179,7 +185,7 @@ class ApiIntegrationTest {
                 .andExpect(jsonPath("$.categoryName").value("Прясно мляко"))
                 .andExpect(jsonPath("$.stores.length()").value(2))
                 .andExpect(jsonPath("$.stores[0].promoPrice").value(1.59))
-                .andExpect(jsonPath("$.history.length()").value(2))
+                .andExpect(jsonPath("$.history.length()").value(greaterThanOrEqualTo(2)))
                 .andExpect(jsonPath("$.alternatives[0].chainName").value("Lidl"));
         mvc.perform(get("/api/public/products/{id}", 987654)).andExpect(status().isNotFound());
     }
@@ -207,6 +213,67 @@ class ApiIntegrationTest {
                 // Разделено пазаруване: мляко (Кауфланд 2) + хляб (Лидл) + банани (Кауфланд 1)
                 .andExpect(jsonPath("$.split.total").value(6.77))
                 .andExpect(jsonPath("$.split.storeCount").value(3));
+    }
+
+    @Test
+    void basketByAmountComparesTheCostOfReachingTheAmount() throws Exception {
+        // 5 л олио: Лидл 1 × 5 л = 8.50 € (по-евтино от 5 × 1 л = 10 €), Кауфланд 2 × 3 л = 12.60 €
+        mvc.perform(post("/api/public/basket").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settlementCode\":\"68134\",\"items\":[{\"categoryId\":42,\"quantity\":1,\"amount\":5,\"unit\":\"l\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bestPerChain[0].chainName").value("Lidl"))
+                .andExpect(jsonPath("$.bestPerChain[0].total").value(8.50))
+                .andExpect(jsonPath("$.bestPerChain[0].lines[0].productName").value("Олио Бисер 5 л"))
+                .andExpect(jsonPath("$.bestPerChain[0].lines[0].quantity").value(1))
+                .andExpect(jsonPath("$.bestPerChain[0].lines[0].packageQty").value(5))
+                .andExpect(jsonPath("$.bestPerChain[1].chainName").value("Kaufland"))
+                .andExpect(jsonPath("$.bestPerChain[1].lines[0].quantity").value(2))
+                .andExpect(jsonPath("$.bestPerChain[1].total").value(12.60));
+
+        // Стока на тегло: 1.5 кг банани × 2.49 €/кг = 3.74 € (не 2 „опаковки“)
+        mvc.perform(post("/api/public/basket").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settlementCode\":\"68134\",\"items\":[{\"categoryId\":52,\"quantity\":1,\"amount\":1.5,\"unit\":\"kg\"}]}"))
+                .andExpect(jsonPath("$.bestPerChain[0].total").value(3.74))
+                .andExpect(jsonPath("$.bestPerChain[0].lines[0].packageUnit").value("kg"));
+
+        // По брой опаковки: най-евтината единична опаковка
+        mvc.perform(post("/api/public/basket").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settlementCode\":\"68134\",\"items\":[{\"categoryId\":42,\"keyword\":\"бисер\",\"quantity\":1}]}"))
+                .andExpect(jsonPath("$.bestPerChain[0].lines[0].productName").value("Олио Бисер 1 л"))
+                .andExpect(jsonPath("$.bestPerChain[0].total").value(2.00));
+
+        mvc.perform(post("/api/public/basket").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"settlementCode\":\"68134\",\"items\":[{\"categoryId\":42,\"quantity\":1,\"amount\":5,\"unit\":\"pcs\"}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("Количеството трябва да е между 0,01 и 100 кг или л"));
+    }
+
+    @Test
+    void backfillingAnOlderDayAddsHistoryWithoutTouchingCurrentPrices(@TempDir Path dir) throws Exception {
+        LocalDate older = DAY_1.minusDays(3);
+        Path zip = zip(dir.resolve("old.zip"), Map.of("Кауфланд България_131129282.csv", HEADER
+                + "\"68134\",\"Кауфланд София 1\",\"Прясно мляко Верея СТАРО ИМЕ\",\"100\",\"6\",\"9.99\",\"\"\n"));
+
+        assertThat(importService.importLocalZip(zip, older).getStatus()).isEqualTo(ImportRun.Status.SUCCESS);
+
+        assertThat(jdbc.queryForObject("select name from product where code = '100'", String.class))
+                .isEqualTo("Прясно мляко Верея 3% 1л");
+        assertThat(jdbc.queryForList("select pr.price from price pr join product p on p.id = pr.product_id "
+                + "where p.code = '100' order by pr.price", java.math.BigDecimal.class))
+                .extracting(java.math.BigDecimal::toPlainString).containsExactly("1.79", "1.89");
+        assertThat(jdbc.queryForObject("select h.min_price from price_history h join product p on p.id = h.product_id "
+                + "where p.code = '100' and h.price_date = ?", java.math.BigDecimal.class, java.sql.Date.valueOf(older)))
+                .isEqualByComparingTo("9.99");
+    }
+
+    @Test
+    void savedListsKeepAmounts() throws Exception {
+        UUID user = UUID.randomUUID();
+        mvc.perform(withUser(post("/api/lists"), user).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Олио\",\"items\":[{\"categoryId\":42,\"quantity\":1,\"amount\":2.5,\"unit\":\"l\"}]}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.items[0].amount").value(2.5))
+                .andExpect(jsonPath("$.items[0].unit").value("l"));
     }
 
     @Test

@@ -17,6 +17,11 @@ spring:
     password: ${DATABASE_PASSWORD:postgres}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:5}
+      # Supabase pooler-ът затваря неактивни връзки; подменяме ги по-рано и
+      # ги „пингваме“, за да не получим мъртва връзка (напр. след заспиване на компютъра)
+      max-lifetime: 300000
+      keepalive-time: 60000
+      validation-timeout: 5000
   jpa:
     open-in-view: false
     hibernate:
@@ -26,6 +31,11 @@ spring:
       hibernate:
         jdbc:
           batch_size: 100
+  cache:
+    # Справочниците се променят веднъж дневно; след всеки импорт кешът се изчиства
+    cache-names: settlements,categories,chains,stats
+    caffeine:
+      spec: maximumSize=500,expireAfterWrite=1h
   jackson:
     default-property-inclusion: non_null
   threads:
@@ -51,9 +61,18 @@ app:
     # ЕИК на веригите, които се импортират. Празно = всички (~70 вериги, ~1.4 млн. реда на ден).
     chains: ${IMPORT_CHAINS:131129282,131071587,130007884,206255903,831556063,131324923,121644736,204786976,202420609,200978413,128036665}
     # Колко дни история да се пази (price_history).
-    history-days: ${IMPORT_HISTORY_DAYS:90}
+    history-days: ${IMPORT_HISTORY_DAYS:60}
     # При празна база – импорт на вчерашните цени веднага след стартиране.
     on-startup: ${IMPORT_ON_STARTUP:true}
+    # Еднократен импорт и изход (за GitHub Actions): "yesterday", "2026-10-09" или "2026-09-27..2026-10-09"
+    run-once: ${IMPORT_RUN_ONCE:}
+    # Локална папка с вече изтеглени ZIP файлове (ползва се преди изтегляне от КЗП)
+    local-archive: ${KZP_LOCAL_ARCHIVE:.kzp-archive}
+  archive:
+    # Архив на дневните ZIP файлове в Supabase Storage (КЗП пази само ~14 дни).
+    # Нужен е service_role / secret ключ – само на сървъра, никога във фронтенда.
+    bucket: ${ARCHIVE_BUCKET:kzp-archive}
+    service-key: ${SUPABASE_SERVICE_ROLE_KEY:}
 
 management:
   endpoints:

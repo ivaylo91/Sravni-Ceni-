@@ -1,0 +1,5 @@
+target
+.dev-db
+.kzp-archive
+.env
+*.log

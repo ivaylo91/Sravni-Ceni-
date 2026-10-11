@@ -1,5 +1,6 @@
 package bg.sravniceni.dto;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -23,7 +24,7 @@ public final class ListDtos {
             List<@Valid BasketItemRequest> items) {
     }
 
-    public record ListItemDto(Short categoryId, String keyword, int quantity) {
+    public record ListItemDto(Short categoryId, String keyword, int quantity, BigDecimal amount, String unit) {
     }
 
     public record ShoppingListDto(Long id, String name, Instant createdAt, Instant updatedAt, List<ListItemDto> items) {

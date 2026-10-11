@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
-  faChevronDown, faChevronUp, faCircleCheck, faCircleXmark, faFloppyDisk, faMinus, faPiggyBank, faPlus,
+  faChevronDown, faChevronUp, faCircleCheck, faCircleXmark, faFloppyDisk, faPiggyBank, faPlus,
   faRoute, faStore, faTrash, faTrophy, faCartShopping,
 } from '@fortawesome/free-solid-svg-icons'
+import { QuantityControl } from '../components/QuantityControl'
 import { ChainBadge, EmptyState, ErrorMessage, PageTitle, Spinner } from '../components/ui'
 import { useToast } from '../components/Toast'
 import { useCatalog } from '../context/CatalogContext'
@@ -12,7 +13,7 @@ import { useList } from '../context/ListContext'
 import { useAuth } from '../context/AuthContext'
 import { api } from '../lib/api'
 import { authEnabled } from '../lib/supabase'
-import { formatPrice, pluralize } from '../lib/format'
+import { formatPrice, pluralize, unitLabel } from '../lib/format'
 import { groupIcon } from '../lib/icons'
 import type { BasketLine, BasketResult, Chain, ListItem, StoreBasket } from '../lib/types'
 
@@ -60,7 +61,8 @@ export function ListPage() {
   const label = (item?: ListItem) => {
     if (!item) return ''
     const name = category(item.categoryId)?.name
-    return [name, item.keyword].filter(Boolean).join(' · ')
+    const amount = item.unit ? `${String(item.amount ?? 1).replace('.', ',')} ${unitLabel(item.unit)}` : undefined
+    return [name, item.keyword, amount].filter(Boolean).join(' · ')
   }
 
   return (
@@ -92,7 +94,7 @@ export function ListPage() {
           ) : (
             <ul className="card divide-y divide-slate-100">
               {items.map((item) => (
-                <li key={item.id} className="flex items-center gap-3 px-4 py-3">
+                <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
                     <FontAwesomeIcon icon={groupIcon(category(item.categoryId)?.groupIcon)} />
                   </span>
@@ -101,26 +103,13 @@ export function ListPage() {
                       {category(item.categoryId)?.name ?? 'Всякакъв продукт'}
                     </div>
                     {item.keyword && <div className="truncate text-xs text-slate-500">съдържа „{item.keyword}“</div>}
+                    {item.unit && (
+                      <div className="text-xs text-brand-700">
+                        сравнява цена за {String(item.amount ?? 1).replace('.', ',')} {unitLabel(item.unit)}
+                      </div>
+                    )}
                   </div>
-                  <div className="flex items-center rounded-xl border border-slate-200">
-                    <button
-                      className="h-8 w-8 text-slate-500 hover:text-slate-900 disabled:opacity-30"
-                      onClick={() => update(item.id, { quantity: item.quantity - 1 })}
-                      disabled={item.quantity <= 1}
-                      aria-label="Намали количеството"
-                    >
-                      <FontAwesomeIcon icon={faMinus} />
-                    </button>
-                    <span className="price w-6 text-center text-sm font-bold">{item.quantity}</span>
-                    <button
-                      className="h-8 w-8 text-slate-500 hover:text-slate-900 disabled:opacity-30"
-                      onClick={() => update(item.id, { quantity: item.quantity + 1 })}
-                      disabled={item.quantity >= 99}
-                      aria-label="Увеличи количеството"
-                    >
-                      <FontAwesomeIcon icon={faPlus} />
-                    </button>
-                  </div>
+                  <QuantityControl item={item} onChange={(patch) => update(item.id, patch)} />
                   <button
                     className="h-8 w-8 text-slate-400 hover:text-red-600"
                     onClick={() => remove(item.id)}
@@ -430,7 +419,21 @@ function Lines({ lines, items, label }: { lines: BasketLine[]; items: ListItem[]
               {l.productName}
             </Link>
             <div className="text-xs text-slate-400">
-              за „{label(items[l.itemIndex])}“ · {l.quantity} × {formatPrice(l.price)}
+              за „{label(items[l.itemIndex])}“ ·{' '}
+              {l.packageUnit && l.packageQty == null ? (
+                // стока на тегло
+                <>
+                  {String(items[l.itemIndex]?.amount ?? l.quantity).replace('.', ',')} {unitLabel(l.packageUnit)} ×{' '}
+                  {formatPrice(l.price)}/{unitLabel(l.packageUnit)}
+                </>
+              ) : (
+                <>
+                  {l.quantity} × {formatPrice(l.price)}
+                  {items[l.itemIndex]?.unit && l.packageQty && (
+                    <> ({l.quantity} × {String(l.packageQty).replace('.', ',')} {unitLabel(l.packageUnit)})</>
+                  )}
+                </>
+              )}
               {l.promo && <span className="ml-1 font-semibold text-red-600">промоция</span>}
             </div>
           </div>

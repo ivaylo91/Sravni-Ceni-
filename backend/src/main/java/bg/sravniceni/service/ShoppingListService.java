@@ -71,14 +71,14 @@ public class ShoppingListService {
                 throw new IllegalArgumentException("Непозната категория: " + i.categoryId());
             }
             String keyword = i.keyword() == null || i.keyword().isBlank() ? null : i.keyword().trim();
-            return new ShoppingListItem(i.categoryId(), keyword, i.quantity());
+            return new ShoppingListItem(i.categoryId(), keyword, i.quantity(), i.amount(), i.unit());
         }).toList();
     }
 
     private static ShoppingListDto toDto(ShoppingList list) {
         return new ShoppingListDto(list.getId(), list.getName(), list.getCreatedAt(), list.getUpdatedAt(),
                 list.getItems().stream()
-                        .map(i -> new ListItemDto(i.getCategoryId(), i.getKeyword(), i.getQuantity()))
+                        .map(i -> new ListItemDto(i.getCategoryId(), i.getKeyword(), i.getQuantity(), i.getAmount(), i.getUnit()))
                         .toList());
     }
 }
